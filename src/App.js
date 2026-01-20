@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Target, Dumbbell, Briefcase, Wallet, Users, Plus, ChevronLeft, ChevronRight, Trash2, FileText, Settings, Download, Upload, X } from 'lucide-react';
-
+// --- привет ---
 // --- Компоненты иконок ---
 const ICONS = {
   goals: Target,
