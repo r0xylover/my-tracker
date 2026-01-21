@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Target, Dumbbell, Briefcase, Wallet, Users, Plus, ChevronLeft, ChevronRight, Trash2, FileText, Settings, Download, Upload, X } from 'lucide-react';
-// --- привет ---
+import { Target, Dumbbell, Briefcase, Wallet, Users, Plus, ChevronLeft, ChevronRight, Trash2, FileText, Settings, Download, Upload, X, Check } from 'lucide-react';
+
 // --- Компоненты иконок ---
 const ICONS = {
   goals: Target,
@@ -19,7 +19,14 @@ const CATEGORIES = [
 ];
 
 // --- Утилиты ---
-const formatDateKey = (date) => date.toISOString().split('T')[0];
+
+// ИСПРАВЛЕНИЕ 1: Использование локального времени вместо UTC
+const formatDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const triggerHaptic = () => {
   if (navigator.vibrate) {
@@ -63,38 +70,56 @@ const getPathData = (points, width, height, padding, maxVal) => {
 };
 
 // --- Компонент задачи со свайпом ---
-const SwipeableTask = ({ task, onDelete }) => {
+const SwipeableTask = ({ task, onSwipe, type }) => {
   const [offsetX, setOffsetX] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
   const startX = useRef(null);
   
+  const isCompleteType = type === 'complete'; // Если true - это активная задача (свайп для галочки)
+  
   const handleTouchStart = (e) => {
+    // Останавливаем всплытие, чтобы не триггерить переключение даты
+    e.stopPropagation();
     startX.current = e.touches[0].clientX;
   };
 
   const handleTouchMove = (e) => {
+    e.stopPropagation();
     if (startX.current === null) return;
     const currentX = e.touches[0].clientX;
     const diff = currentX - startX.current;
     if (diff < 0) setOffsetX(diff);
   };
 
-  const handleTouchEnd = () => {
-    if (offsetX < -100) {
-      setIsDeleting(true);
+  const handleTouchEnd = (e) => {
+    e.stopPropagation();
+    if (offsetX < -80) {
+      setIsAnimating(true);
       triggerHaptic();
-      setTimeout(() => onDelete(task.id), 300);
-      setOffsetX(-1000);
+      // Ждем анимацию перед действием
+      setTimeout(() => {
+          onSwipe(task.id);
+          // Сброс состояния для случая, если компонент переиспользуется
+          setOffsetX(0);
+          setIsAnimating(false);
+      }, 300);
+      setOffsetX(-1000); // Улетает влево
     } else {
       setOffsetX(0);
     }
     startX.current = null;
   };
 
+  // Цвета и иконки в зависимости от типа действия
+  const bgColor = isCompleteType ? 'bg-green-900/30' : 'bg-red-900/30';
+  const Icon = isCompleteType ? Check : Trash2;
+  const iconColor = isCompleteType ? 'text-green-500' : 'text-red-500';
+  const textColor = isCompleteType ? 'text-gray-300' : 'text-gray-500 line-through';
+
   return (
-    <div className={`relative overflow-hidden mb-2 rounded-lg transition-all duration-300 ${isDeleting ? 'max-h-0 opacity-0 mb-0' : 'max-h-20 opacity-100'}`}>
-      <div className="absolute inset-0 bg-red-900/30 flex items-center justify-end pr-4 rounded-lg">
-        <Trash2 className="text-red-500" size={20} />
+    <div className={`relative overflow-hidden mb-2 rounded-lg transition-all duration-300 ${isAnimating ? 'max-h-0 opacity-0 mb-0' : 'max-h-20 opacity-100'}`}>
+      <div className={`absolute inset-0 ${bgColor} flex items-center justify-end pr-4 rounded-lg`}>
+        <Icon className={iconColor} size={20} />
       </div>
       <div 
         className="relative bg-black flex items-center justify-between p-3 border-b border-gray-900"
@@ -103,7 +128,7 @@ const SwipeableTask = ({ task, onDelete }) => {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <span className="text-gray-300 font-light select-none">{task.text}</span>
+        <span className={`${textColor} font-light select-none`}>{task.text}</span>
         <ChevronLeft className="text-gray-700 opacity-30" size={16} />
       </div>
     </div>
@@ -119,6 +144,10 @@ export default function App() {
   const [viewMode, setViewMode] = useState('week');
   const [showNote, setShowNote] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Рефы для глобального свайпа дат
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
 
   // Инициализация
   useEffect(() => {
@@ -166,11 +195,18 @@ export default function App() {
   const addTask = (e) => {
     e.preventDefault();
     if (!newTask.trim()) return;
-    setTasks([...tasks, { id: Date.now(), text: newTask }]);
+    // Добавляем completed: false
+    setTasks([...tasks, { id: Date.now(), text: newTask, completed: false }]);
     setNewTask('');
     triggerHaptic();
   };
 
+  // Завершение задачи (перенос вниз)
+  const completeTask = (id) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: true } : t));
+  };
+
+  // Полное удаление задачи
   const deleteTask = (id) => {
     setTasks(prev => prev.filter(t => t.id !== id));
   };
@@ -180,6 +216,30 @@ export default function App() {
     newDate.setDate(newDate.getDate() + days);
     setCurrentDate(newDate);
     setShowNote(false); 
+  };
+
+  // Глобальный свайп для смены даты
+  const onMainTouchStart = (e) => {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+  };
+
+  const onMainTouchEnd = (e) => {
+      if (!touchStartX.current || !touchStartY.current) return;
+      
+      const diffX = touchStartX.current - e.changedTouches[0].clientX;
+      const diffY = touchStartY.current - e.changedTouches[0].clientY;
+
+      // Если свайп горизонтальный и достаточно длинный (> 50px) и не слишком вертикальный
+      if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+          if (diffX > 0) {
+              changeDate(1); // Свайп влево -> следующий день
+          } else {
+              changeDate(-1); // Свайп вправо -> предыдущий день
+          }
+      }
+      touchStartX.current = null;
+      touchStartY.current = null;
   };
 
   // Экспорт/Импорт
@@ -231,7 +291,7 @@ export default function App() {
       start = new Date(today.getFullYear(), today.getMonth(), 1);
       countDays = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
       const keys = getDatesInRange(start, countDays);
-      labels = keys.filter((_, i) => i % 5 === 0).map(k => k.split('-')[2]);
+      labels = keys.map(k => k.split('-')[2]); // Все дни месяца для точности
       points = keys.map(k => data[k] ? Object.values(data[k].categories || {}).filter(Boolean).length : 0);
       moods = keys.map(k => data[k]?.mood || 0);
     } else if (viewMode === 'year') {
@@ -254,15 +314,24 @@ export default function App() {
     return { labels, points, moods };
   }, [data, viewMode]);
 
+  // Разделение задач
+  const activeTasks = tasks.filter(t => !t.completed);
+  const completedTasks = tasks.filter(t => t.completed);
+
   const renderChart = () => {
     const height = 150;
-    const width = 300;
     const padding = 20;
-    const graphHeight = height - padding * 2;
-    const graphWidth = width - padding * 2;
     const { points, moods, labels } = chartData;
     if (points.length === 0) return null;
 
+    // ИСПРАВЛЕНИЕ 2: Динамическая ширина графика для скролла
+    const minStepX = 40; // минимальное расстояние между точками
+    const calculatedWidth = Math.max(window.innerWidth - 48, points.length * minStepX);
+    const width = calculatedWidth;
+
+    const graphHeight = height - padding * 2;
+    const graphWidth = width - padding * 2;
+    
     const stepX = graphWidth / (points.length - 1 || 1);
     const pointsLine = points.map((val, i) => {
         const x = padding + i * stepX;
@@ -273,29 +342,40 @@ export default function App() {
     const moodPath = getPathData(moods, width, height, padding, 5);
 
     return (
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-40 overflow-visible">
-        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#333" strokeWidth="1" />
-        <path d={moodPath} fill="none" stroke="rgba(239, 68, 68, 0.6)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline fill="none" stroke="#FFFFFF" strokeWidth="2" points={pointsLine} strokeLinecap="round" strokeLinejoin="round" />
-        {viewMode !== 'month' && labels.map((label, i) => (
-           <text key={i} x={padding + i * stepX} y={height} fill="#666" fontSize="10" textAnchor="middle">{label}</text>
-        ))}
-      </svg>
+      <div className="w-full overflow-x-auto no-scrollbar" onTouchStart={(e) => e.stopPropagation()}>
+        <svg width={width} height={height} className="overflow-visible">
+            <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#333" strokeWidth="1" />
+            <path d={moodPath} fill="none" stroke="rgba(239, 68, 68, 0.6)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            <polyline fill="none" stroke="#FFFFFF" strokeWidth="2" points={pointsLine} strokeLinecap="round" strokeLinejoin="round" />
+            {labels.map((label, i) => (
+            <text key={i} x={padding + i * stepX} y={height} fill="#666" fontSize="10" textAnchor="middle">{label}</text>
+            ))}
+        </svg>
+      </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans selection:bg-gray-800 touch-pan-y overflow-x-hidden">
+    <div 
+        className="min-h-screen bg-black text-white font-sans selection:bg-gray-800 touch-pan-y overflow-x-hidden"
+        onTouchStart={onMainTouchStart}
+        onTouchEnd={onMainTouchEnd}
+    >
       <style>{`
         input[type=range] { -webkit-appearance: none; background: transparent; height: 30px; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 28px; width: 28px; border-radius: 50%; background: #ffffff; margin-top: -12px; box-shadow: 0 0 10px rgba(255,255,255,0.3); transition: transform 0.1s ease; }
         input[type=range]:active::-webkit-slider-thumb { transform: scale(1.1); }
         input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #333; border-radius: 2px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
       {/* Модалка настроек */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-in fade-in duration-200">
+        <div 
+            className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-in fade-in duration-200"
+            onTouchStart={(e) => e.stopPropagation()} // Блок свайпа даты в модалке
+        >
            <div className="w-full max-w-sm border border-gray-800 bg-black p-6 rounded-2xl relative">
               <button onClick={() => setShowSettings(false)} className="absolute top-4 right-4 text-gray-500"><X /></button>
               <h2 className="text-xl mb-6 font-light">Настройки</h2>
@@ -313,7 +393,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Шапка с отступом для iPhone */}
+      {/* Шапка */}
       <header className="p-6 pb-2 flex justify-between items-center border-b border-gray-900 sticky top-0 bg-black z-10 pt-[calc(1.5rem+env(safe-area-inset-top))]">
         <button onClick={() => setShowSettings(true)} className="p-2 text-gray-500 hover:text-white transition-colors">
           <Settings size={20} />
@@ -334,15 +414,17 @@ export default function App() {
       {/* Навигация */}
       <div className="flex justify-between items-center px-4 py-2 border-b border-gray-900/50 bg-black/50 backdrop-blur-sm sticky top-[calc(73px+env(safe-area-inset-top))] z-10">
          <button onClick={() => changeDate(-1)} className="p-2 text-gray-500 hover:text-white"><ChevronLeft size={20} /></button>
-         <span className="text-xs text-gray-600 font-mono uppercase tracking-widest">Навигация</span>
+         <span className="text-xs text-gray-600 font-mono uppercase tracking-widest">Свайп для навигации</span>
          <button onClick={() => changeDate(1)} className="p-2 text-gray-500 hover:text-white"><ChevronRight size={20} /></button>
       </div>
 
-      {/* MAIN: Добавлен отступ снизу для iPhone (pb) */}
       <main className="max-w-md mx-auto p-6 space-y-10 pb-[calc(5rem+env(safe-area-inset-bottom))]">
         
-        {/* Секция Заметок */}
-        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${showNote ? 'max-h-60 opacity-100 mb-6' : 'max-h-0 opacity-0'}`}>
+        {/* Заметки */}
+        <div 
+            className={`overflow-hidden transition-all duration-300 ease-in-out ${showNote ? 'max-h-60 opacity-100 mb-6' : 'max-h-0 opacity-0'}`}
+            onTouchStart={(e) => e.stopPropagation()} // Блок свайпа в поле ввода
+        >
           <textarea 
             value={dayData.note}
             onChange={(e) => updateNote(e.target.value)}
@@ -407,7 +489,7 @@ export default function App() {
         <section>
           <div className="flex justify-between items-end mb-4">
              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Задачи</h2>
-             <span className="text-[10px] text-gray-700">Свайп влево для удаления</span>
+             <span className="text-[10px] text-gray-700">Свайп влево для действия</span>
           </div>
           <form onSubmit={addTask} className="relative mb-6">
             <input
@@ -421,16 +503,38 @@ export default function App() {
               <Plus size={20} />
             </button>
           </form>
-          <div className="space-y-1">
-            {tasks.length === 0 && <div className="text-gray-800 text-sm italic py-2">Задач нет</div>}
-            {tasks.map(task => (
-              <SwipeableTask key={task.id} task={task} onDelete={deleteTask} />
+          
+          {/* Активные задачи */}
+          <div className="space-y-1 mb-4">
+            {activeTasks.length === 0 && completedTasks.length === 0 && <div className="text-gray-800 text-sm italic py-2">Задач нет</div>}
+            {activeTasks.map(task => (
+              <SwipeableTask 
+                key={task.id} 
+                task={task} 
+                onSwipe={completeTask} 
+                type="complete" 
+              />
             ))}
           </div>
+
+          {/* Выполненные задачи */}
+          {completedTasks.length > 0 && (
+            <div className="space-y-1 border-t border-gray-900 pt-4">
+                <h3 className="text-[10px] text-gray-700 uppercase tracking-widest mb-2">Выполнено</h3>
+                {completedTasks.map(task => (
+                <SwipeableTask 
+                    key={task.id} 
+                    task={task} 
+                    onSwipe={deleteTask} 
+                    type="delete" 
+                />
+                ))}
+            </div>
+          )}
         </section>
 
         {/* Настроение */}
-        <section>
+        <section onTouchStart={(e) => e.stopPropagation()}>
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Настроение</h2>
             <span className={`text-2xl font-mono transition-colors ${dayData.mood >= 4 ? 'text-green-500' : dayData.mood <= 2 ? 'text-red-500' : 'text-white'}`}>
